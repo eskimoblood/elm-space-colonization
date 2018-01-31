@@ -11,18 +11,20 @@ import Svg.Attributes as Attributes
 import Dict
 import OpenSolid.LineSegment2d as Line
 import List.Extra exposing (lift2)
+import Task
+import Time exposing (Time, millisecond)
 
 
 hormoneRange =
-    90
+    60
 
 
 branchLength =
-    5
+    1
 
 
 budRange =
-    2
+    4
 
 
 numberPoints =
@@ -45,7 +47,10 @@ main =
 
 subscriptions : Model -> Sub Msg
 subscriptions model =
-    Sub.none
+    if (List.isEmpty model.hormons) then
+        Sub.none
+    else
+        Time.every millisecond (\_ -> Step)
 
 
 type alias Buds =
@@ -107,7 +112,6 @@ view model =
                 ]
                 (List.map (lineSegment2d []) model.lines)
             ]
-        , div [] [ text (toString model) ]
         ]
 
 
@@ -137,7 +141,7 @@ update msg model =
         Grid ->
             let
                 range =
-                    List.range 0 50 |> List.map (toFloat >> ((*) 10))
+                    List.range 0 10 |> List.map (toFloat >> ((*) 60))
             in
                 ( { model
                     | hormons = List.map Point2d.fromCoordinates (lift2 (,) range range)
@@ -172,19 +176,27 @@ updateBud h b =
             Just { bud | vec = Vector2d.sum bud.vec (Vector2d.from bud.pos h) }
 
 
-calcNewPos seed ( _, { pos, vec } ) =
-    ( pos
-    , Point2d.translateBy
-        (Vector2d.normalize vec
-            |> Vector2d.scaleBy
-                (Tuple.first (Random.step (Random.float 1 branchLength) seed))
+calcNewPos ( _, { pos, vec } ) ( r, seed ) =
+    let
+        ( scaleFactor, newSeed ) =
+            Debug.log ""
+                (Random.step (Random.float 1 branchLength) seed)
+    in
+        ( ( pos
+          , Point2d.translateBy
+                (Vector2d.normalize vec
+                    |> Vector2d.scaleBy
+                        scaleFactor
+                )
+                pos
+          )
+            :: r
+        , newSeed
         )
-        pos
-    )
 
 
-isNotNearBud buds h =
-    (List.all (\( _, b ) -> (Point2d.distanceFrom h b) > budRange) buds)
+isNotNearBud seed buds h =
+    (List.all (\( _, b ) -> (Point2d.distanceFrom h b) > Tuple.first (Random.step (Random.float 0 budRange) seed)) buds)
 
 
 canMove ( _, { pos, vec } ) =
@@ -201,7 +213,7 @@ branchBud bud ( seed, buds ) =
         ( v, newSeed ) =
             Random.step (Random.int 0 10) seed
     in
-        if (v > 7) then
+        if (v > 2) then
             ( newSeed, bud :: buds )
         else
             ( newSeed, buds )
@@ -219,18 +231,18 @@ step { hormons, buds, lines, seed } =
             List.map (\b -> ( (Point2d.coordinates b), { pos = b, vec = Vector2d.fromComponents ( 0, 0 ) } )) buds
                 |> Dict.fromList
 
-        nearestBuds =
+        ( nearestBuds, newSeed ) =
             List.map (findNearestBud buds) hormons
                 |> List.filterMap identity
                 |> List.foldl (\( h, b ) r -> Dict.update (Point2d.coordinates b) (updateBud h) r) bs
                 |> Dict.toList
                 |> List.filter canMove
-                |> List.map (calcNewPos seed)
+                |> List.foldl calcNewPos ( [], seed )
 
-        ( newSeed, newBuds ) =
+        ( _, newBuds ) =
             branchBuds buds seed
     in
-        { hormons = List.filter (isNotNearBud nearestBuds) hormons
+        { hormons = List.filter (isNotNearBud seed nearestBuds) hormons
         , buds = List.append newBuds (List.map Tuple.second nearestBuds)
         , lines = List.append lines (createLines nearestBuds)
         , seed = newSeed
